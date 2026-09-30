@@ -1,0 +1,17 @@
+{
+  "id": "/app/",
+  "name": "PayoutLens",
+  "short_name": "PayoutLens",
+  "description": "Read-only Solana payment reconciliation. Live checks require internet.",
+  "start_url": "/app/",
+  "scope": "/app/",
+  "display": "standalone",
+  "background_color": "#111515",
+  "theme_color": "#111515",
+  "lang": "en",
+  "prefer_related_applications": false,
+  "icons": [
+    {"src": "/app/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/app/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}
+  ]
+}

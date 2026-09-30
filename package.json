@@ -1,0 +1,1 @@
+{"name":"payoutlens","version":"0.2.0","private":true,"type":"module","scripts":{"test":"node --test tests/*.test.mjs","start":"node preview.mjs","build":"node build.mjs"}}

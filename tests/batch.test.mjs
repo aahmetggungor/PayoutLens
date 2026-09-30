@@ -1,0 +1,26 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {parseCSV,repeatedProofs,reportCSV,signatureFrom,USDC} from '../dist/batch.mjs';
+import {fetchFinalized,NETWORKS} from '../dist/verify.mjs';
+const sig='45Juoq54owC3dgh8yzioqD2xtAP2uzbB6TAMupTLzNWp8CGsz7tjtot5eT8DGLxr17E1dz4XanssUehtoLCNrXn6';
+const wallet='EBk7pSomiBbHe21WFEWGN6UvkXPrAyymNm95gjiEAKwq';
+const headers='payout_id,recipient,mint,amount,signature';
+const line=id=>`${id},${wallet},${USDC},0.047839,${sig}`;
+test('CSV parses quoted IDs and CRLF',()=>{const rows=parseCSV('\uFEFF'+headers+'\r\n'+line('"team, reward"')+'\r\n');assert.equal(rows[0].payout_id,'team, reward');assert.equal(rows[0].signature,sig);});
+test('CSV rejects missing columns, duplicate headers and IDs',()=>{assert.throws(()=>parseCSV('payout_id,recipient\na,b'));assert.throws(()=>parseCSV(headers+',amount\n'+line('a')+',1'));assert.throws(()=>parseCSV(headers+'\n'+line('a')+'\n'+line('a')));});
+test('CSV rejects broken quotes and field count',()=>{assert.throws(()=>parseCSV(headers+'\n"oops'));assert.throws(()=>parseCSV(headers+'\n'+line('a')+',extra'));});
+test('CSV enforces row and byte limits',()=>{assert.throws(()=>parseCSV(headers+'\n'+Array.from({length:51},(_,i)=>line(String(i))).join('\n')));assert.throws(()=>parseCSV('a'.repeat(100001)));});
+test('CSV validates wallet, token, amount and timestamp',()=>{assert.throws(()=>parseCSV(headers+'\n'+line('a').replace(wallet,'bad')));assert.throws(()=>parseCSV(headers+'\n'+line('a').replace('0.047839','0')));assert.throws(()=>parseCSV(headers+',not_before\n'+line('a')+',2026-09-30'));});
+test('CSV accepts timezone-aware cutoff and optional reference',()=>{const rows=parseCSV(headers+',not_before,reference\n'+line('a')+',2026-09-29T00:00:00Z,'+wallet);assert.equal(rows[0].reference,wallet);});
+test('repeated proof marks ALL identical wallet/mint claims',()=>{const rows=parseCSV(headers+'\n'+line('a')+'\n'+line('b'));assert.deepEqual(repeatedProofs(rows),[true,true]);});
+test('one signature paying separate recipients is not duplicate',()=>{const rows=parseCSV(headers+'\n'+line('a')+'\n'+line('b').replace(wallet,USDC));assert.deepEqual(repeatedProofs(rows),[false,false]);});
+test('explorer links normalize safely',()=>{assert.equal(signatureFrom('https://solscan.io/tx/'+sig),sig);assert.equal(signatureFrom('https://explorer.solana.com/tx/'+sig+'?cluster=devnet'),sig);assert.throws(()=>signatureFrom('https://evil.example/tx/'+sig));assert.throws(()=>signatureFrom('https://solscan.io/account/'+wallet));});
+test('CSV export escapes formulas and quoted data',()=>{const csv=reportCSV([{expected:{payout_id:'=1+1',amount:'1',recipient:wallet,mint:USDC},report:{status:'matched',reason:'a "quote"'},signature:sig}]);assert.ok(csv.includes("\"'=1+1\""));assert.ok(csv.includes('"a ""quote"""'));});
+test('live adapter validates network identity, signature and version-1 request',async t=>{
+  const calls=[];
+  t.mock.method(globalThis,'fetch',async(_url,options)=>{const body=JSON.parse(options.body);calls.push(body);return {ok:true,json:async()=>({result:body.method==='getGenesisHash'?NETWORKS['mainnet-beta'].genesis:{transaction:{signatures:[sig]}}})};});
+  const source=await fetchFinalized(sig);assert.equal(source.genesis,NETWORKS['mainnet-beta'].genesis);assert.equal(calls[1].params[1].commitment,'finalized');assert.equal(calls[1].params[1].maxSupportedTransactionVersion,1);
+});
+test('wrong network identity fails before transaction fetch',async t=>{let calls=0;t.mock.method(globalThis,'fetch',async()=>{calls++;return {ok:true,json:async()=>({result:'wrong-network'})};});await assert.rejects(fetchFinalized(sig),/network identity mismatch/);assert.equal(calls,1);});
+test('RPC failures and null results never become matched evidence',async t=>{t.mock.method(globalThis,'fetch',async()=>({ok:false,status:429}));await assert.rejects(fetchFinalized(sig),/429/);});
+test('mismatched returned signature is rejected',async t=>{t.mock.method(globalThis,'fetch',async(_url,options)=>({ok:true,json:async()=>({result:JSON.parse(options.body).method==='getGenesisHash'?NETWORKS['mainnet-beta'].genesis:{transaction:{signatures:['other']}}})}));await assert.rejects(fetchFinalized(sig),/signature mismatch/);});
